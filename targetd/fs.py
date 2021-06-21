@@ -70,20 +70,13 @@ def initialize(config_dict):
                 "The fs_pool {0} does not exist".format(mount),
             )
 
-    for info in Mount.mounted_filesystems():
-        if info[Mount.MOUNT_POINT] in all_fs_pools:
-            filesystem = info[Mount.FS_TYPE]
-            if filesystem in pool_modules:
-                # forward both mountpoint and device to the backend as ZFS prefers its own devices (pool/volume) and
-                # btrfs prefers mount points (/mnt/btrfs). Otherwise ZFS or btrfs needs to ask mounted_filesystems again
-                pools[filesystem].append(
-                    {"mount": info[Mount.MOUNT_POINT], "device": info[Mount.DEVICE]}
-                )
-            else:
-                raise TargetdError(
-                    TargetdError.NO_SUPPORT,
-                    "Unsupported filesystem {0} for pool {1}".format(info[2], info[1]),
-                )
+    for filesystem in pool_modules:
+        for (mountpoint, device) in Mount.mounted_filesystems(filesystem):
+            # forward both mountpoint and device to the backend as ZFS prefers its own devices (pool/volume) and
+            # btrfs prefers mount points (/mnt/btrfs). Otherwise ZFS or btrfs needs to ask mounted_filesystems again
+            pools[filesystem].append(
+                {"mount": mountpoint, "device": device}
+            )
 
     for modname, mod in pool_modules.items():
         mod.fs_initialize(config_dict, pools[modname])
