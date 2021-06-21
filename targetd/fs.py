@@ -18,9 +18,8 @@
 
 import os
 
-from targetd.backends import btrfs, zfs
+from targetd.backends import zfs
 from targetd.mount import Mount
-from targetd.nfs import Nfs, Export
 from targetd.utils import TargetdError
 
 # Notes:
@@ -40,7 +39,7 @@ from targetd.utils import TargetdError
 #
 # There may be better ways of utilizing btrfs.
 
-pool_modules = {"zfs": zfs, "btrfs": btrfs}
+pool_modules = {"zfs": zfs}
 allow_chown = False
 
 
@@ -57,7 +56,7 @@ def pool_module(pool_name):
 
 
 def initialize(config_dict):
-    pools = {"zfs": [], "btrfs": []}
+    pools = {"zfs": []}
     global allow_chown
 
     allow_chown = config_dict["allow_chown"]
@@ -97,10 +96,6 @@ def initialize(config_dict):
         ss_list=ss,
         fs_snapshot=fs_snapshot,
         fs_snapshot_delete=fs_snapshot_delete,
-        nfs_export_auth_list=nfs_export_auth_list,
-        nfs_export_list=nfs_export_list,
-        nfs_export_add=nfs_export_add,
-        nfs_export_remove=nfs_export_remove,
     )
 
 
@@ -202,77 +197,3 @@ def fs_clone(req, fs_uuid, dest_fs_name, snapshot_id):
     pool_module(fs_ht["pool"]).fs_clone(
         req, fs_ht["pool"], fs_ht["name"], dest_fs_name, source
     )
-
-
-def nfs_export_auth_list(req):
-    return Nfs.security_options()
-
-
-def nfs_export_list(req):
-    rc = []
-    exports = Nfs.exports()
-    for e in exports:
-        rc.append(dict(host=e.host, path=e.path, options=e.options_list()))
-    return rc
-
-
-def nfs_export_add(req, host, path, options=None, chown=None, export_path=None):
-
-    if not isinstance(options, list):
-        if options is not None and len(options) > 0:
-            options = [options]
-        else:
-            options = []
-
-    if export_path is not None:
-        raise TargetdError(
-            TargetdError.NFS_NO_SUPPORT,
-            "separate export path not supported at " "this time",
-        )
-    bit_opt = 0
-    key_opt = {}
-
-    for o in options:
-        if "=" in o:
-            k, v = o.split("=")
-            key_opt[k] = v
-        else:
-            bit_opt |= Export.bool_option[o]
-
-    if chown is not None:
-        if not allow_chown:
-            raise TargetdError(
-                TargetdError.NO_SUPPORT,
-                "Chown is disabled. Consult manual before enabling it.",
-            )
-        items = chown.split(":")
-        try:
-            uid = int(items[0])
-            gid = -1
-            if len(items) > 1:
-                gid = int(items[1])
-            os.chown(path, uid, gid)
-        except ValueError as e:
-            raise TargetdError(
-                TargetdError.INVALID_ARGUMENT, "Wrong chown arguments: {}".format(e)
-            )
-    try:
-        Nfs.export_add(host, path, bit_opt, key_opt)
-    except ValueError as e:
-        raise TargetdError(TargetdError.INVALID_ARGUMENT, "{}".format(e))
-    return dict(host=host, path=path)
-
-
-def nfs_export_remove(req, host, path):
-    found = False
-
-    for e in Nfs.exports():
-        if e.host == host and e.path == path:
-            Nfs.export_remove(e)
-            found = True
-
-    if not found:
-        raise TargetdError(
-            TargetdError.NOT_FOUND_NFS_EXPORT,
-            "NFS export to remove not found %s:%s" % (host, path),
-        )

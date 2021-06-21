@@ -21,8 +21,6 @@ import json
 import os
 import signal
 
-import setproctitle
-
 try:
     from BaseHTTPServer import BaseHTTPRequestHandler, HTTPServer
 except ImportError:
@@ -327,8 +325,6 @@ def main():
         load_config(default_config_path)
     except AttributeError:
         return -1
-
-    setproctitle.setproctitle("targetd")
 
     try:
         update_mapping()
