@@ -67,7 +67,7 @@ def has_udev_path(udev_path):
 
 
 def split_udev_path(udev_path):
-    dataset = udev_path.split("/", 2)[2]
+    dataset = udev_path.split("/", 3)[3]
     for p in pools:
         if dataset.startswith(p + "/"):
             return p, dataset.replace(p + "/", "", 1)
@@ -108,7 +108,7 @@ def has_so_name(so_name):
 
 
 def get_dev_path(pool_name, vol_name):
-    return "/dev/%s/%s" % (pool2dev_name(pool_name), vol_name)
+    return "/dev/zvol/%s/%s" % (pool2dev_name(pool_name), vol_name)
 
 
 def initialize(config_dict, init_pools):
