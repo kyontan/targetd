@@ -332,10 +332,6 @@ def _tpg_lun_of(tpg, pool_name, vol_name):
         so = BlockStorageObject(so_name, dev=mod.get_dev_path(pool_name, vol_name))
         so.wwn = vol_serial
 
-    # export useful scsi model if kernel > 3.8
-    with ignored(RTSLibError):
-        so.set_attribute("emulate_model_alias", "1")
-
     # only add tpg lun if it doesn't exist
     for tmp_lun in tpg.luns:
         if (
