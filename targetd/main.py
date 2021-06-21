@@ -48,7 +48,7 @@ default_config = dict(
     user="admin",
     log_level="info",
     # security: no default password
-    target_name="iqn.2003-01.org.linux-iscsi.%s:targetd" % socket.gethostname(),
+    target_name="iqn.2003-01.org.freebsd-iscsi.%s:targetd" % socket.gethostname(),
     ssl=False,
     ssl_cert="/etc/target/targetd_cert.pem",
     ssl_key="/etc/target/targetd_key.pem",
