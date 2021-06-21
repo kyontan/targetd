@@ -154,6 +154,7 @@ def _zfs_exec_command(args=None):
         args = []
 
     for _ in range(3):
+        logging.debug("Execute cmd: %s", ' '.join([zfs_cmd] + args))
         proc = subprocess.Popen(
             [zfs_cmd] + args, stdout=subprocess.PIPE, stderr=subprocess.PIPE
         )
