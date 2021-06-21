@@ -281,23 +281,26 @@ def export_destroy(req, pool, vol, initiator_wwn):
 
 
 def initiator_set_auth(req, initiator_wwn, in_user, in_pass, out_user, out_pass):
-    fm = FabricModule("iscsi")
-    t = Target(fm, target_name)
-    tpg = TPG(t, 1)
-    na = NodeACL(tpg, initiator_wwn)
+    # TODO: re-implement
+    pass
 
-    if not in_user or not in_pass:
-        # rtslib treats '' as its NULL value for these
-        in_user = in_pass = ""
+    # fm = FabricModule("iscsi")
+    # t = Target(fm, target_name)
+    # tpg = TPG(t, 1)
+    # na = NodeACL(tpg, initiator_wwn)
 
-    if not out_user or not out_pass:
-        out_user = out_pass = ""
+    # if not in_user or not in_pass:
+    #     # rtslib treats '' as its NULL value for these
+    #     in_user = in_pass = ""
 
-    na.chap_userid = in_user
-    na.chap_password = in_pass
+    # if not out_user or not out_pass:
+    #     out_user = out_pass = ""
 
-    na.chap_mutual_userid = out_user
-    na.chap_mutual_password = out_pass
+    # na.chap_userid = in_user
+    # na.chap_password = in_pass
+
+    # na.chap_mutual_userid = out_user
+    # na.chap_mutual_password = out_pass
 
 
 
