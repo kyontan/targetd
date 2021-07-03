@@ -19,6 +19,7 @@ import logging
 import re
 import subprocess
 from time import time, sleep
+from math import log2
 
 from targetd.main import TargetdError
 
@@ -36,10 +37,12 @@ class VolInfo(object):
 
     uuid = ""
     size = 0
+    volblocksize = 4096 # dummy
 
-    def __init__(self, uuid, size):
+    def __init__(self, uuid, size, volblocksize):
         self.uuid = uuid
         self.size = size
+        self.volblocksize = volblocksize
 
 
 def has_pool(pool_name):
@@ -293,19 +296,19 @@ def fs_hash():
 
 
 def vol_info(pool, name):
-    props = _zfs_get([pool + "/" + name], ["guid", "volsize"], fstype="volume")
+    props = _zfs_get([pool + "/" + name], ["guid", "volsize", "volblocksize"], fstype="volume")
     if (pool + "/" + name) in props:
         props = props[pool + "/" + name]
-        return VolInfo(props["guid"], int(props["volsize"]))
+        return VolInfo(props["guid"], int(props["volsize"]), int(props["volblocksize"]))
 
 
 def fs_info(pool, name):
     props = _zfs_get(
-        [pool + "/" + name], ["guid", "used", "available"], fstype="filesystem"
+        [pool + "/" + name], ["guid", "used", "available", "volblocksize"], fstype="filesystem"
     )
     if (pool + "/" + name) in props:
         props = props[pool + "/" + name]
-        return VolInfo(props["guid"], int(props["available"]) + int(props["used"]))
+        return VolInfo(props["guid"], int(props["available"]) + int(props["used"]), int(props["volblocksize"]))
 
 
 def snap_info(pool, name, snapshot):
@@ -315,9 +318,34 @@ def snap_info(pool, name, snapshot):
         return dict(name=pool + "/" + name + "@" + snapshot, uuid=props["guid"])
 
 
-def create(req, pool, name, size):
+def create(req, pool, name, size, volblocksize=4096):
     _check_dataset_name(name)
-    code, out, err = _zfs_exec_command(["create", "-V", str(size), pool + "/" + name])
+    if volblocksize is None:
+        code, out, err = _zfs_exec_command(["create", "-V", str(size), pool + "/" + name])
+    else:
+        if volblocksize != 2 ** int(log2(volblocksize)):
+            logging.error(
+                "Could not create volume %s on pool %s. volblocksize (%d) must be power of 2"
+                % (name, pool, volblocksize)
+            )
+            raise TargetdError(
+                TargetdError.INVALID_ARGUMENT,
+                "Could not create volume %s on pool %s, volblocksize (%d) must be power of 2" % (name, pool, volblocksize),
+            )
+
+        if volblocksize < 512 or 131072 < volblocksize:
+            logging.error(
+                "Could not create volume %s on pool %s. volblocksize(%d) must be between 512B and 128KB"
+                % (name, pool, volblocksize)
+            )
+            raise TargetdError(
+                TargetdError.INVALID_ARGUMENT,
+                "Could not create volume %s on pool %s, volblocksize (%d)  must be between 512B and 128KB" % (
+                    name, pool, volblocksize),
+            )
+
+        code, out, err = _zfs_exec_command(["create", "-o", f"volblocksize={volblocksize}", "-V", str(size), pool + "/" + name])
+
     if code != 0:
         logging.error(
             "Could not create volume %s on pool %s. Code: %s, stderr %s"

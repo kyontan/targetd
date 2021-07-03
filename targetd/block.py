@@ -15,35 +15,18 @@
 #
 # Routines to export block devices over iscsi.
 
-from rtslib_fb import (
-    Target,
-    TPG,
-    NodeACL,
-    FabricModule,
-    BlockStorageObject,
-    NetworkPortal,
-    MappedLUN,
-    RTSLibError,
-    RTSLibNotInCFS,
-    NodeACLGroup,
-)
-
+import logging
 from targetd.backends import zfs
+from targetd.backends import ctld
 from targetd.main import TargetdError
 from targetd.utils import ignored, name_check
 
 MAX_LUN = 256
 
-
-def set_portal_addresses(tpg):
-    for a in addresses:
-        NetworkPortal(tpg, a)
-
-
 pool_modules = {"zfs": zfs}
 target_name = ""
 addresses = []
-
+ctld_config = None
 
 def pool_module(pool_name):
     for modname, mod in pool_modules.items():
@@ -77,6 +60,35 @@ def initialize(config_dict):
     pools = dict()
     pools["zfs"] = list(config_dict["zfs_block_pools"])
 
+    global ctld_config
+
+    if len(config_dict["portal_addresses"]) != 1:
+        raise TargetdError(
+            TargetdError.INVALID, "currently, only one portal_addresses is supported"
+        )
+
+    if not ctld.check_file_exists():
+        ctld_config = ctld.init_config(
+            listen=config_dict["portal_addresses"][0],
+            iqn=config_dict["target_name"],
+            )
+        try:
+            logging.debug("Initiate ctld config")
+            ctld.save_file(ctld_config)
+        except:
+            raise TargetdError(
+                TargetdError.INVALID, "Failed to save ctld init config"
+            )
+    else:
+        if not ctld.check_file_permission():
+            raise TargetdError(
+                TargetdError.INVALID_POOL, "ctld config file is not readable or not writable"
+            )
+
+        logging.debug("Load ctld config")
+        ctld_config = ctld.load_file()
+
+
     global target_name
     target_name = config_dict["target_name"]
 
@@ -97,7 +109,7 @@ def initialize(config_dict):
         export_create=export_create,
         export_destroy=export_destroy,
         initiator_set_auth=initiator_set_auth,
-        initiator_list=initiator_list,
+        # initiator_list=initiator_list,
     )
 
 
@@ -133,18 +145,20 @@ def destroy(req, pool, name):
             "Volume %s not found in pool %s" % (name, pool),
         )
 
-    with ignored(RTSLibNotInCFS):
-        fm = FabricModule("iscsi")
-        t = Target(fm, target_name, mode="lookup")
-        tpg = TPG(t, 1, mode="lookup")
+    udev_path = mod.get_dev_path(pool, name)
+    found = False
 
-        so_name = get_so_name(pool, name)
+    for target in ctld_config.target:
+        for l in target.lun:
+            if l.path != udev_path:
+                continue
+            found = True
 
-        if so_name in (lun.storage_object.name for lun in tpg.luns):
-            raise TargetdError(
-                TargetdError.VOLUME_MASKED,
-                "Volume '%s' cannot be " "removed while exported" % name,
-            )
+    if found:
+        raise TargetdError(
+            TargetdError.VOLUME_MASKED,
+            "Volume '%s' cannot be " "removed while exported" % name,
+        )
 
     mod.destroy(req, pool, name)
 
@@ -189,99 +203,89 @@ def resize(req, pool, name, size):
 
 
 def export_list(req):
-    try:
-        fm = FabricModule("iscsi")
-        t = Target(fm, target_name, mode="lookup")
-        tpg = TPG(t, 1, mode="lookup")
-    except RTSLibNotInCFS:
-        return []
-
     exports = []
-    for na in tpg.node_acls:
-        for mlun in na.mapped_luns:
-            mod = udev_path_module(mlun.tpg_lun.storage_object.udev_path)
-            mlun_pool, mlun_name = mod.split_udev_path(
-                mlun.tpg_lun.storage_object.udev_path
-            )
+    for target in ctld_config.target:
+        for l in target.lun:
+            mod = udev_path_module(l.path)
+            mlun_pool, mlun_name = mod.split_udev_path(l.path)
             vinfo = mod.vol_info(mod.dev2pool_name(mlun_pool), mlun_name)
-            exports.append(
-                dict(
-                    initiator_wwn=na.node_wwn,
-                    lun=mlun.mapped_lun,
-                    vol_name=mlun_name,
-                    pool=mod.dev2pool_name(mlun_pool),
-                    vol_uuid=vinfo.uuid,
-                    vol_size=vinfo.size,
+            for initiator_wwn in l.initiator_wwns:
+                exports.append(
+                    dict(
+                        initiator_wwn=initiator_wwn,
+                        lun=l.id,
+                        vol_name=mlun_name,
+                        pool=mod.dev2pool_name(mlun_pool),
+                        vol_uuid=vinfo.uuid,
+                        vol_size=vinfo.size,
+                    )
                 )
-            )
+
     return exports
 
 
 def export_create(req, pool, vol, initiator_wwn, lun):
-    fm = FabricModule("iscsi")
-    t = Target(fm, target_name)
-    tpg = TPG(t, 1)
-    tpg.enable = True
-    tpg.set_attribute("authentication", "0")
+    mod = pool_module(pool)
+    udev_path = mod.get_dev_path(pool, vol)
 
-    set_portal_addresses(tpg)
+    found = False
+    for target in ctld_config.target:
+        for l in target.lun:
+            if l.path != udev_path:
+                continue
+            found = True
 
-    na = NodeACL(tpg, initiator_wwn)
+            l.initiator_wwns.append(initiator_wwn)
 
-    tpg_lun = _tpg_lun_of(tpg, pool, vol)
+    if not found:
+        vol_info = mod.vol_info(pool, vol)
+        new_lun = ctld.CtldTargetLunConfig(
+            id=lun,
+            path=mod.get_dev_path(pool, vol),
+            initiator_wwns=[initiator_wwn],
+            blocksize=vol_info.volblocksize,)
 
-    # only add mapped lun if it doesn't exist
-    for tmp_mlun in tpg_lun.mapped_luns:
-        if tmp_mlun.mapped_lun == lun and tmp_mlun.parent_nodeacl == na:
-            break
-    else:
-        MappedLUN(na, lun, tpg_lun)
-
+        ctld_config.target[0].append_lun(new_lun)
+    ctld.save_file(ctld_config)
+    ctld.reload_ctld(ctld_config)
 
 
 def export_destroy(req, pool, vol, initiator_wwn):
     mod = pool_module(pool)
-    fm = FabricModule("iscsi")
-    t = Target(fm, target_name)
-    tpg = TPG(t, 1)
-    na = NodeACL(tpg, initiator_wwn)
+    udev_path = mod.get_dev_path(pool, vol)
 
-    pool_dev_name = mod.pool2dev_name(pool)
+    found = False
 
-    for mlun in na.mapped_luns:
-        # all SOs are Block so we can access udev_path safely
-        if mod.has_udev_path(mlun.tpg_lun.storage_object.udev_path):
-            mlun_vg, mlun_name = mod.split_udev_path(
-                mlun.tpg_lun.storage_object.udev_path
-            )
+    for target in ctld_config.target:
+        for l in target.lun:
+            if l.path != udev_path:
+                continue
+            found = True
 
-            if mlun_vg == pool_dev_name and mlun_name == vol:
-                tpg_lun = mlun.tpg_lun
-                mlun.delete()
-                # be tidy and delete unused tpg lun mappings?
-                if not any(tpg_lun.mapped_luns):
-                    so = tpg_lun.storage_object
-                    tpg_lun.delete()
-                    so.delete()
-                break
-    else:
+            if initiator_wwn not in l.initiator_wwns:
+                raise TargetdError(
+                    TargetdError.NOT_FOUND_VOLUME_EXPORT,
+                    "Volume '%s' found in ctld exports, but not found %s" % (vol, initiator_wwn),
+                )
+
+            if len(l.initiator_wwns) == 1:
+                # No other initiator_wwn in lun, so remove whole lun
+                target.lun.remove(l)
+            else:
+                l.initiator_wwns.remove(initiator_wwn)
+
+    if not found:
         raise TargetdError(
             TargetdError.NOT_FOUND_VOLUME_EXPORT,
-            "Volume '%s' not found in %s exports" % (vol, initiator_wwn),
+            "Volume '%s' not found in ctld exports" % (vol),
         )
 
-    # Clean up tree if branch has no leaf
-    if not any(na.mapped_luns):
-        na.delete()
-        if not any(tpg.node_acls):
-            tpg.delete()
-            if not any(t.tpgs):
-                t.delete()
-
+    ctld.save_file(ctld_config)
+    ctld.reload_ctld(ctld_config)
 
 
 def initiator_set_auth(req, initiator_wwn, in_user, in_pass, out_user, out_pass):
-    # TODO: re-implement
+    # TODO: re-implement if auth is needed
     pass
 
     # fm = FabricModule("iscsi")
@@ -311,33 +315,3 @@ def block_pools(req):
         results += mod.block_pools(req)
 
     return results
-
-
-
-def _tpg_lun_of(tpg, pool_name, vol_name):
-    """
-    Return a object of LUN for given pool and volume.
-    If not exist, create one.
-    """
-    mod = pool_module(pool_name)
-    # get wwn of volume so LIO can export as vpd83 info
-    vol_serial = mod.vol_info(pool_name, vol_name).uuid
-
-    # only add new SO if it doesn't exist
-    # so.name concats pool & vol names separated by ':'
-    so_name = mod.get_so_name(pool_name, vol_name)
-    try:
-        so = BlockStorageObject(so_name)
-    except RTSLibError:
-        so = BlockStorageObject(so_name, dev=mod.get_dev_path(pool_name, vol_name))
-        so.wwn = vol_serial
-
-    # only add tpg lun if it doesn't exist
-    for tmp_lun in tpg.luns:
-        if (
-            tmp_lun.storage_object.name == so.name
-            and tmp_lun.storage_object.plugin == "block"
-        ):
-            return tmp_lun
-    else:
-        return LUN(tpg, storage_object=so)

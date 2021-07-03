@@ -286,6 +286,7 @@ def load_config(config_path):
 def update_mapping():
     # wait until now so submodules can import 'main' safely
     import targetd.block as block
+
     import targetd.fs as fs
 
     try:
@@ -294,15 +295,17 @@ def update_mapping():
         log.error("Error initializing block module: %s" % e)
         raise
 
-    try:
-        mapping.update(fs.initialize(config))
-    except Exception as e:
-        log.error("Error initializing fs module: %s" % e)
-        raise
+    # TODO: fs submodule is not ready in FreeBSD
+    # try:
+    #     mapping.update(fs.initialize(config))
+    # except Exception as e:
+    #     log.error("Error initializing fs module: %s" % e)
+    #     raise
 
     # one method requires output from both modules
     def pool_list(req):
-        return list(itertools.chain(block.block_pools(req), fs.fs_pools(req)))
+        # return list(itertools.chain(block.block_pools(req), fs.fs_pools(req)))
+        return list(itertools.chain(block.block_pools(req)))
 
     mapping["pool_list"] = pool_list
 

@@ -11,6 +11,6 @@ setup(
     maintainer_email="andy@groveronline.com",
     url="http://github.com/open-iscsi/targetd",
     packages=["targetd", "targetd.backends"],
-    install_requires=["setproctitle", "yaml", "rtslib_fb"],
+    install_requires=["marshmallow_dataclass", "yaml"],
     scripts=["scripts/targetd"],
 )
