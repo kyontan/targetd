@@ -125,12 +125,14 @@ def check_vol_exists(req, pool, name):
 
 
 def create(req, pool, name, size):
+    logging.debug(f"START: destroy: pool: {pool}, name: {name}")
     mod = pool_module(pool)
     # Check to ensure that we don't have a volume with this name already,
     # lvm/zfs will fail if we try to create a LV/dataset with a duplicate name
     if check_vol_exists(req, pool, name):
         raise TargetdError(TargetdError.NAME_CONFLICT, "Volume with that name exists")
     mod.create(req, pool, name, size)
+    logging.debug(f"FINISH: destroy: pool: {pool}, name: {name}")
 
 
 def get_so_name(pool, volname):
@@ -138,6 +140,8 @@ def get_so_name(pool, volname):
 
 
 def destroy(req, pool, name):
+    logging.debug(f"START: destroy: pool: {pool}, name: {name}")
+
     mod = pool_module(pool)
     if not check_vol_exists(req, pool, name):
         raise TargetdError(
@@ -161,6 +165,7 @@ def destroy(req, pool, name):
         )
 
     mod.destroy(req, pool, name)
+    logging.debug(f"FINISH: destroy: pool: {pool}, name: {name}")
 
 
 def copy(req, pool, vol_orig, vol_new, size=None, timeout=10):
@@ -225,6 +230,7 @@ def export_list(req):
 
 
 def export_create(req, pool, vol, initiator_wwn, lun):
+    logging.debug(f"START: export_create: pool: {pool}, vol: {vol}, initiator_wwn: {initiator_wwn}")
     mod = pool_module(pool)
     udev_path = mod.get_dev_path(pool, vol)
 
@@ -248,9 +254,12 @@ def export_create(req, pool, vol, initiator_wwn, lun):
         ctld_config.target[0].append_lun(new_lun)
     ctld.save_file(ctld_config)
     ctld.reload_ctld(ctld_config)
+    logging.debug(f"FINISH: export_create: pool: {pool}, vol: {vol}, initiator_wwn: {initiator_wwn}")
 
 
 def export_destroy(req, pool, vol, initiator_wwn):
+    logging.debug(f"START: export_desroy: pool: {pool}, vol: {vol}, initiator_wwn: {initiator_wwn}")
+
     mod = pool_module(pool)
     udev_path = mod.get_dev_path(pool, vol)
 
@@ -282,6 +291,7 @@ def export_destroy(req, pool, vol, initiator_wwn):
 
     ctld.save_file(ctld_config)
     ctld.reload_ctld(ctld_config)
+    logging.debug(f"FINISHED: export_desroy: pool: {pool}, vol: {vol}, initiator_wwn: {initiator_wwn}")
 
 
 def initiator_set_auth(req, initiator_wwn, in_user, in_pass, out_user, out_pass):
